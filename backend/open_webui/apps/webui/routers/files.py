@@ -4,6 +4,9 @@ import shutil
 import uuid
 from pathlib import Path
 from typing import Optional
+import boto3
+from boto3.s3.transfer import S3UploadFailedError
+from botocore.exceptions import ClientError
 
 from open_webui.apps.webui.models.files import FileForm, FileModel, Files
 from open_webui.config import UPLOAD_DIR
@@ -35,12 +38,34 @@ def upload_file(file: UploadFile = File(...), user=Depends(get_verified_user)):
         id = str(uuid.uuid4())
         name = filename
         filename = f"{id}_{filename}"
-        file_path = f"{UPLOAD_DIR}/{filename}"
 
-        contents = file.file.read()
-        with open(file_path, "wb") as f:
-            f.write(contents)
-            f.close()
+        # TODO: determine save to local file or S3 according to config
+        upload_config = "S3"
+        if upload_config == "S3":
+            # save to S3
+            # TODO: read bucket name from config
+            bucket_name = f"amzn-s3-demo-bucket-{uuid.uuid4()}"
+            s3_resource = boto3.resource("s3")
+            bucket = s3_resource.Bucket(bucket_name)
+            # only need to create if not exists
+            try:
+                bucket.create(
+                    CreateBucketConfiguration={
+                        "LocationConstraint": s3_resource.meta.client.meta.region_name
+                    }
+                )
+            except ClientError as err:
+                # todo: handle error
+                return
+            obj = bucket.Object(filename)
+            obj.uploadobj(file.file)
+        else:
+            file_path = f"{UPLOAD_DIR}/{filename}"
+
+            contents = file.file.read()
+            with open(file_path, "wb") as f:
+                f.write(contents)
+                f.close()
 
         file = Files.insert_new_file(
             user.id,
