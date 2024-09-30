@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Optional
 from pydantic import BaseModel
 import mimetypes
+import boto3
+import io
 
 
 from open_webui.apps.webui.models.files import FileForm, FileModel, Files
@@ -44,12 +46,22 @@ def upload_file(file: UploadFile = File(...), user=Depends(get_verified_user)):
         id = str(uuid.uuid4())
         name = filename
         filename = f"{id}_{filename}"
-        file_path = f"{UPLOAD_DIR}/{filename}"
 
         contents = file.file.read()
-        with open(file_path, "wb") as f:
-            f.write(contents)
-            f.close()
+        upload_config = "S3"
+        if upload_config == "S3":
+            bucket_name = ""
+            s3 = boto3.client("s3")
+            response = s3.put_object(
+                Body=contents,
+                Bucket=bucket_name,
+                Key=filename)
+            file_path = filename
+        else:
+            file_path = f"{UPLOAD_DIR}/{filename}"
+            with open(file_path, "wb") as f:
+                f.write(contents)
+                f.close()
 
         file = Files.insert_new_file(
             user.id,
@@ -220,18 +232,28 @@ async def get_file_content_by_id(id: str, user=Depends(get_verified_user)):
     if file and (file.user_id == user.id or user.role == "admin"):
         file_path = Path(file.meta["path"])
 
-        # Check if the file already exists in the cache
-        if file_path.is_file():
-            print(f"file_path: {file_path}")
-            headers = {
-                "Content-Disposition": f'attachment; filename="{file.meta.get("name", file.filename)}"'
-            }
-            return FileResponse(file_path, headers=headers)
+        storage_type = "S3"
+        if storage_type == "S3":
+            s3_client = boto3.client('s3')
+            bucket_name = ""
+            s3_object = s3_client.get_object(Bucket=bucket_name, Key=file.meta["path"])
+            file_stream = s3_object['Body'].read()
+            return StreamingResponse(io.BytesIO(file_stream), media_type='application/octet-stream', headers={
+                'Content-Disposition': f'attachment; filename={file.filename}'
+            })
         else:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=ERROR_MESSAGES.NOT_FOUND,
-            )
+            # Check if the file already exists in the cache
+            if file_path.is_file():
+                print(f"file_path: {file_path}")
+                    headers = {
+                    "Content-Disposition": f'attachment; filename="{file.meta.get("name", file.filename)}"'
+                }
+                return FileResponse(file_path, headers=headers)
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=ERROR_MESSAGES.NOT_FOUND,
+                )
     else:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

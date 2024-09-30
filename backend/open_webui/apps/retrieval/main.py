@@ -10,6 +10,8 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator, Optional, Sequence, Union
+import boto3
+import tempfile
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -794,7 +796,16 @@ def process_file(
             # Usage: /files/
 
             file_path = file.meta.get("path", None)
-            if file_path:
+            storage_type = "S3"
+            if storage_type == "S3":
+                bucket_name = ""
+                s3 = boto3.client('s3')
+                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                    s3.download_fileobj(bucket_name, file_path, temp_file)
+                    local_file_path = os.path.abspath(temp_file.name)
+            else:
+                local_file_path = file_path
+            if local_file_path:
                 loader = Loader(
                     engine=app.state.config.CONTENT_EXTRACTION_ENGINE,
                     TIKA_SERVER_URL=app.state.config.TIKA_SERVER_URL,
@@ -802,7 +813,7 @@ def process_file(
                 )
 
                 docs = loader.load(
-                    file.filename, file.meta.get("content_type"), file_path
+                    file.filename, file.meta.get("content_type"), local_file_path
                 )
             else:
                 docs = [
