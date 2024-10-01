@@ -39,6 +39,7 @@ def upload_file(file: UploadFile = File(...), user=Depends(get_verified_user)):
         name = filename
         filename = f"{id}_{filename}"
 
+        # TODO: add S3 sdk to requirements
         # TODO: determine save to local file or S3 according to config
         upload_config = "S3"
         if upload_config == "S3":
@@ -46,19 +47,7 @@ def upload_file(file: UploadFile = File(...), user=Depends(get_verified_user)):
             # TODO: read bucket name from config
             bucket_name = f"amzn-s3-demo-bucket-{uuid.uuid4()}"
             s3_resource = boto3.resource("s3")
-            bucket = s3_resource.Bucket(bucket_name)
-            # only need to create if not exists
-            try:
-                bucket.create(
-                    CreateBucketConfiguration={
-                        "LocationConstraint": s3_resource.meta.client.meta.region_name
-                    }
-                )
-            except ClientError as err:
-                # todo: handle error
-                return
-            obj = bucket.Object(filename)
-            obj.uploadobj(file.file)
+            s3_resource.upload_fileobj(file.file, bucket_name, filename)
         else:
             file_path = f"{UPLOAD_DIR}/{filename}"
 
