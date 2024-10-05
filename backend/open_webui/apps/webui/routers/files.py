@@ -5,8 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 import boto3
-from boto3.s3.transfer import S3UploadFailedError
-from botocore.exceptions import ClientError
+import io
 
 from open_webui.apps.webui.models.files import FileForm, FileModel, Files
 from open_webui.config import UPLOAD_DIR
@@ -14,6 +13,7 @@ from open_webui.constants import ERROR_MESSAGES
 from open_webui.env import SRC_LOG_LEVELS
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from open_webui.utils.utils import get_admin_user, get_verified_user
 
 log = logging.getLogger(__name__)
@@ -39,6 +39,7 @@ def upload_file(file: UploadFile = File(...), user=Depends(get_verified_user)):
         name = filename
         filename = f"{id}_{filename}"
 
+        contents = file.file.read()
         # TODO: add S3 sdk to requirements
         # TODO: determine save to local file or S3 according to config
         upload_config = "S3"
@@ -46,12 +47,16 @@ def upload_file(file: UploadFile = File(...), user=Depends(get_verified_user)):
             # save to S3
             # TODO: read bucket name from config
             bucket_name = f"amzn-s3-demo-bucket-{uuid.uuid4()}"
-            s3_resource = boto3.resource("s3")
-            s3_resource.upload_fileobj(file.file, bucket_name, filename)
+            s3 = boto3.client("s3")
+            response = s3.put_object(
+                Body=contents,
+                Bucket=bucket_name,
+                Key=filename)
+            print("s3 put response:\n")
+            print(response)
+            file_path = filename
         else:
             file_path = f"{UPLOAD_DIR}/{filename}"
-
-            contents = file.file.read()
             with open(file_path, "wb") as f:
                 f.write(contents)
                 f.close()
@@ -169,15 +174,28 @@ async def get_file_content_by_id(id: str, user=Depends(get_verified_user)):
     if file and (file.user_id == user.id or user.role == "admin"):
         file_path = Path(file.meta["path"])
 
-        # Check if the file already exists in the cache
-        if file_path.is_file():
-            print(f"file_path: {file_path}")
-            return FileResponse(file_path)
+        #todo: download from S3
+        #todo: read storage_type from config
+        storage_type = "S3"
+        if storage_type == "S3":
+
+            s3_client = boto3.client('s3')
+            bucket_name = ""
+            s3_object = s3_client.get_object(Bucket=bucket_name, Key=file.meta["path"])
+            file_stream = s3_object['Body'].read()
+            return StreamingResponse(io.BytesIO(file_stream), media_type='application/octet-stream', headers={
+                'Content-Disposition': f'attachment; filename={file.filename}'
+            })
         else:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=ERROR_MESSAGES.NOT_FOUND,
-            )
+            # Check if the file already exists in the cache
+            if file_path.is_file():
+                print(f"file_path: {file_path}")
+                return FileResponse(file_path)
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=ERROR_MESSAGES.NOT_FOUND,
+                )
     else:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -15,6 +15,8 @@ import numpy as np
 import torch
 import requests
 import validators
+import boto3
+import tempfile
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -1350,15 +1352,28 @@ def process_doc(
         file = Files.get_file_by_id(form_data.file_id)
         file_path = file.meta.get("path", f"{UPLOAD_DIR}/{file.filename}")
 
-        f = open(file_path, "rb")
-
         collection_name = form_data.collection_name
+
+        # TODO: determine S3 or local file by config
+        storage_type = "S3"
+        if storage_type == "S3":
+            if collection_name is None:
+                # TODO: read bucket name from config
+                bucket_name = ""
+                s3 = boto3.client('s3')
+                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                    s3.download_fileobj(bucket_name, file_path, temp_file)
+                    # TODO cleanup temp file
+                    local_file_path = os.path.abspath(temp_file.name)
+        else:
+            local_file_path = file_path
+        f = open(local_file_path, "rb")
         if collection_name is None:
             collection_name = calculate_sha256(f)[:63]
         f.close()
 
         loader, known_type = get_loader(
-            file.filename, file.meta.get("content_type"), file_path
+            file.filename, file.meta.get("content_type"), local_file_path
         )
         data = loader.load()
 
